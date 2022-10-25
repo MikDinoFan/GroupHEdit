@@ -1,0 +1,9 @@
+---
+title: "
+---
+
+This is our first plot!
+
+```{r}
+library(ggplot)
+```
