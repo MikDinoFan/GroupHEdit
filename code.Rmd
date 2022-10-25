@@ -4,6 +4,8 @@ title: "
 
 This is our first plot!
 
+Let's load ggplot library
+
 ```{r}
 library(ggplot)
 ```
