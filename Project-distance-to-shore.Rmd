@@ -1,0 +1,203 @@
+---
+title: "EEB313-Analysis"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, message=F, echo = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(maps)
+library(sp)
+library(sf)
+library(s2)
+library(rgdal)
+library(mapproj)
+library(urbnmapr)
+library(ggfortify)
+library(usethis)
+library(ggmap)
+
+```
+
+```{r read_data}
+morph <- read.csv("Morphology_metadata2.csv")
+```
+
+```{r PCA}
+morph_means <- morph %>% 
+  group_by(Species) %>%
+  filter(!is.na(Wing) & !is.na(Culmen) & !is.na(Mass)) %>%
+  summarize(mean(Wing), mean(Culmen), mean(Mass))
+
+df <- data.frame(morph_means[,-1])
+
+morph_pc <- prcomp(df, scale = TRUE, center = TRUE, retx = T)
+summary(morph_pc)
+
+morph_pc$rotation <- -1*morph_pc$rotation
+morph_pc$rotation
+
+autoplot(morph_pc, data = morph_means, colour = 'Species', loadings = TRUE, loadings.label = TRUE) +
+labs(title = "Morph Biplot for Hawaii 'Big' Island") +
+theme_classic()
+
+plot(morph_pc)
+```
+
+
+```{r spatial_view, message = F}
+# Identifies ESPG as 6334.
+morph_sf <- st_as_sf(morph, coords = c("UTM_X", "UTM_Y"), crs = 6334)
+
+# Transforms coordinates to standard lat-lon format.
+morph_wgs84 <- st_transform(morph_sf, crs = 4326)
+
+# Converts geometry class into separate lat-lon columns.
+morph <- morph_wgs84 %>% 
+  extract(geometry, c('lon', 'lat'), '\\((.*), (.*)\\)', convert = TRUE) %>% 
+  as.data.frame()
+
+# Selects for relavent columns.
+morph_spa <- morph %>% 
+  select(Species, Date, Sex, Wing, Culmen, Mass, lat, lon)
+
+# Previews the data.
+head(morph_spa)
+
+# Uses ggmap to extract map of Hawaii.
+map_hi <- get_map(location = 'Island of Hawaii', zoom = 9, source = "stamen", maptype = "toner-lite")
+
+# List of natural and anthropogenic effects that can be analyzed.
+effects <- list(Mauna_Loa = c(geocode("Mauna Loa"), Type = "Volcano"),
+                Kīlauea = c(geocode("Kīlauea"), Type = "Volcano"),
+                Hilo = c(geocode("Hilo"), Type = "Urban"),
+                Waimea = c(geocode("Waimea"), Type = "Urban"),
+                Kona = c(geocode("Kona"), Type = "Urban"),
+                Hualalai = c(geocode("Hualalai"), Type = "Mountain"),
+                Mauna_Kea = c(geocode("Mauna Kea Access Rd, Hilo, HI 96720, United States"), Type = "Mountain"),
+                Pohakuloa = c(geocode("Pohakuloa Training Area"), Type = "Military"),
+                Army_Reserve = c(geocode("470 W Lanikaula St, Hilo, HI 96720, United States"), Type = "Military"))
+
+# Formats list as a dataframe.
+effects <- as.data.frame(bind_rows(effects, .id = "Name"))
+
+# Plots the data.
+ggmap(map_hi) +
+  geom_count(data = morph_spa, aes(x = lon, y = lat), alpha = 0.5) +
+  labs(title = "Observations on \nHawaii 'Big' Island", x = "Longitude", y = "Latitude", size = "Number of \nObservations") +
+  geom_point(data = effects, aes(x = lon, y = lat, shape = Type), color = "Red")
+
+```
+
+```{r, eval = F, include = F}
+# An interactive map showing all the points.
+mapview(morph_wgs84$geometry, crs= "4326", grid = FALSE)
+```
+
+```{r shore_distance, warning = F}
+library(geosphere)
+library(osmdata)
+
+# Uses the previously created sf_object to identify unique sample sites.
+morph_wgs84_distinct <- morph_wgs84 %>% 
+  distinct(Species, geometry)
+
+
+
+# Creates a bounding box of Hawaii coastline data.
+osm_box <- getbb(place_name = "Hawaii") %>%
+  opq() %>% 
+  add_osm_feature("natural", "coastline") %>% 
+  osmdata_sf() 
+
+
+# Uses the dist2line function in geosphere.
+dist_coast <- geosphere::dist2Line(p = st_coordinates(morph_wgs84_distinct), 
+                        line = st_coordinates(osm_box$osm_lines)[,1:2])
+
+# Creates a lat lon version of unique sampling sites.
+morph_spa_distinct <- morph_spa %>% 
+  distinct(Species, lat, lon)
+
+# Combine initial data with distance to coastline.
+morph_spa_coast.distance <- cbind(morph_spa_distinct %>% 
+                                      rename(y = lat, x = lon), dist_coast) %>%
+                                      mutate(kilometers = distance/1000)
+
+# Plot distances
+ggmap(map_hi) + 
+  geom_point(data = morph_spa_distinct,
+             aes(x = lon, y = lat)) +
+  geom_segment(data = morph_spa_coast.distance,
+               aes(x = x, 
+                   y = y, 
+                   xend = lon, 
+                   yend = lat))
+  
+
+```
+
+```{r second_distance_method}
+clines <- read_sf('lines.shp')
+
+# Creates a bounding box from surrounding points.
+bbox <- st_bbox(morph_wgs84_distinct) 
+
+# Function for expanding bounding box around points.
+expand_bbox <- function(bbox,metres_x,metres_y){
+  
+  box_centre <- bbox %>% st_as_sfc() %>% 
+    st_transform(crs = 32630) %>%
+    st_centroid() %>%
+    st_transform(crs = 4326) %>%
+    st_coordinates()
+  
+  
+  bbox['xmin'] <-  bbox['xmin'] - (metres_x / 6370000) * (180 / pi) / cos(bbox['xmin'] * pi/180)
+  bbox['xmax'] <-  bbox['xmax'] + (metres_x / 6370000) * (180 / pi) / cos(bbox['xmax'] * pi/180)
+  bbox['ymin'] <-  bbox['ymin'] - (metres_y / 6370000) * (180 / pi)
+  bbox['ymax'] <- bbox['ymax'] + (metres_y / 6370000) * (180 / pi)
+  
+
+  bbox['xmin'] <- ifelse(bbox['xmin'] < -180, bbox['xmin'] + 360, bbox['xmin'])
+  bbox['xmax'] <- ifelse(bbox['xmax'] > 180, bbox['xmax'] - 360, bbox['xmax'])
+  bbox['ymin'] <- ifelse(bbox['ymin'] < -90, (bbox['ymin'] + 180)*-1, bbox['ymin'])
+  bbox['ymax'] <- ifelse(bbox['ymax'] > 90, (bbox['ymax'] + 180)*-1, bbox['ymax'])
+  return(bbox)
+}
+
+
+# Expand bounding box by 30 km in x and 30 km in y to make nice shaped box.
+bbox <- expand_bbox(bbox, metres_x = 1000*30, metres_y = 1000*30) %>% 
+  st_as_sfc
+
+# Pulls only coastline within bounding box
+clines2 <- st_intersection(clines, bbox) 
+
+# Calculates distance
+dist2 <- geosphere::dist2Line(p = st_coordinates(morph_wgs84_distinct), 
+                                 line = as(clines2, 'Spatial'))
+
+
+# Combine initial data with distance to coastline.
+morph_spa_distance2 <- cbind(morph_spa_distinct %>% 
+                            rename(y = lat, x = lon), dist2) %>%
+                            mutate(kilometers = distance/1000)
+
+# Plots map
+ggmap(map_hi) + 
+  geom_point(data = morph_spa_distinct,
+             aes(x = lon, y = lat)) +
+  geom_segment(data = morph_spa_distance2,
+               aes(x = x, 
+                   y = y, 
+                   xend = lon, 
+                   yend = lat))
+
+```
+
