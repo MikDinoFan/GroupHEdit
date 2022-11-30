@@ -8,6 +8,10 @@ output:
 
 Here's everything we've done so far I think -- CHECK THIS
 
+NOTE IMPORTANT - lmer test for wing and mass -- random effects explain 0 of residual variances, but AICc seems to decrease with the random effects added -- CHECK THIS WITH TAs on THURSDAY
+
+I haven't included Matt's code for the shoreline data yet, you guys are welcome to figure out how to slot that in!
+
 ```{r setup, message=F, echo = F}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
