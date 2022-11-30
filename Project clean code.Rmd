@@ -1,0 +1,176 @@
+---
+title: "EEB313 Project: lmer mixed model with shoreline data (and cleanup)"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+Here's everything we've done so far I think -- CHECK THIS
+
+```{r setup, message=F, echo = F}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(maps)
+library(sp)
+library(sf)
+library(s2)
+library(rgdal)
+library(mapproj)
+library(ggfortify)
+library(usethis)
+library(ggmap)
+library(mapview)
+library(arules)
+library(stringr)
+library(lme4)
+library(lmerTest)
+library(nlme)
+```
+
+```{r read_data}
+morph <- read.csv("Morphology_metadata2.csv")
+shr_dat <- read.csv("morph-data-with-shore-dist-binned.csv")
+```
+
+```{r PCA grouping}
+morph_means <- morph %>% 
+  group_by(Species) %>%
+  filter(!is.na(Wing) & !is.na(Culmen) & !is.na(Mass)) %>%
+  summarize(mean(Wing), mean(Culmen), mean(Mass))
+```
+
+```{r PCA and graph}
+df <- data.frame(morph_means[,-1])
+
+morph_pc <- prcomp(df, scale = TRUE, center = TRUE, retx = T)
+summary(morph_pc)
+
+morph_pc$rotation <- -1*morph_pc$rotation
+morph_pc$rotation
+
+autoplot(morph_pc, data = morph_means, colour = 'Species', loadings = TRUE, loadings.label = TRUE) +
+labs(title = "Morph Biplot for Hawaii 'Big' Island") +
+theme_classic()
+
+plot(morph_pc)
+```
+
+```{r spatial_view, message = F}
+# Identifies ESPG as 6334.
+morph_sf <- st_as_sf(morph, coords = c("UTM_X", "UTM_Y"), crs = 6334)
+
+# Transforms coordinates to standard lat-lon format.
+morph_wgs84 <- st_transform(morph_sf, crs = 4326)
+
+# Converts geometry class into separate lat-lon columns.
+morph <- morph_wgs84 %>% 
+  extract(geometry, c('lon', 'lat'), '\\((.*), (.*)\\)', convert = TRUE) %>% 
+  as.data.frame()
+
+# Selects for relavent columns.
+morph_spa <- morph %>% 
+  select(Species, Date, Sex, Wing, Culmen, Mass, lat, lon)
+
+# Previews the data.
+#head(morph_spa)
+
+# Uses ggmap to extract map of Hawaii.
+register_google(key = "AIzaSyCAOX4U9l7oFpljVfFnF1U-IW-0ve92QTk")
+map_hi <- get_map(location = 'Island of Hawaii', zoom = 9, source = "stamen", maptype = "toner-lite")
+
+# List of natural and anthropogenic effects that can be analyzed.
+effects <- list(Mauna_Loa = c(geocode("Mauna Loa"), Type = "Volcano"),
+                Kīlauea = c(geocode("Kīlauea"), Type = "Volcano"),
+                Hilo = c(geocode("Hilo"), Type = "Urban"),
+                Waimea = c(geocode("Waimea"), Type = "Urban"),
+                Kona = c(geocode("Kona"), Type = "Urban"),
+                Hualalai = c(geocode("Hualalai"), Type = "Mountain"),
+                Mauna_Kea = c(geocode("Mauna Kea Access Rd, Hilo, HI 96720, United States"), Type = "Mountain"),
+                Pohakuloa = c(geocode("Pohakuloa Training Area"), Type = "Military"),
+                Army_Reserve = c(geocode("470 W Lanikaula St, Hilo, HI 96720, United States"), Type = "Military"))
+
+# Formats list as a dataframe.
+effects <- as.data.frame(bind_rows(effects, .id = "Name"))
+
+# Plots the data.
+
+ggmap(map_hi) +
+  geom_count(data = morph_spa, aes(x = lon, y = lat), alpha = 0.5) +
+  labs(title = "Observations on \nHawaii 'Big' Island", x = "Longitude", y = "Latitude", size = "Number of \nObservations") +
+  geom_point(data = effects, aes(x = lon, y = lat, shape = Type), color = "Red")
+
+```
+
+```{r Distance of points from Landmarks calculation loop}
+#extract points lat-long data into a matrix
+points <- as.matrix(morph_spa[,7:8])
+
+#names of the distance columns in a list
+name_loc <- c("dist_mau_loa","dist_kil","dist_hil","dist_wai","dist_kon",
+              "dist_hua","dist_mau_kea","dist_poh","dist_arm_res")
+
+#Distance calculation for loop
+for(i in 1:9){
+  loc <- as.numeric(c(effects[i,3], effects[i,2]))
+  dist_x <-  as.data.frame(spDistsN1(points,loc,longlat=T))
+  colnames(dist_x) <- name_loc[i]
+  morph_spa <- cbind(morph_spa,dist_x)
+}
+```
+
+```{r Add shoreline data}
+#Distance to shoreline data combine
+morph_spa <- cbind(morph_spa,shr_dat[,10])
+
+#rename column
+colnames(morph_spa)[18] <- "shr_bin"
+```
+
+```{r Filter NA}
+#Filter out NAs
+morph_spa_noNA <- morph_spa %>% 
+  filter(!is.na(Wing) & !is.na(Culmen) & !is.na(Mass))
+```
+
+```{r Bin Random Effects}
+#Sort Natural Landmarks (random effect) into categories
+morph_spa_bins <- morph_spa_noNA %>% 
+  mutate(mau_loa_bins = discretize(dist_mau_loa, method="interval", breaks=3, labels=c("near","middle","far"))) %>% 
+  mutate(kil_bins = discretize(dist_kil, method="interval", breaks=3, labels=c("near","middle","far"))) %>% 
+  mutate(hua_bins = discretize(dist_hua, method="interval", breaks=3, labels=c("near","middle","far"))) %>% 
+  mutate(mau_kea_bins = discretize(dist_mau_kea, method="interval", breaks=3, labels=c("near","middle","far")))
+```
+
+```{r Numericise Year}
+#Extract last 2 digits -- Years as numeric variable
+morph_spa_bins <- morph_spa_bins %>% 
+  mutate(Year=as.numeric(str_sub(morph_spa_bins$Date,-2,-1)))
+```
+
+Here's the Mixed model PLUS shoreline data
+
+```{r Mixed model: Wing}
+#Mixed model for Wing
+wing_lmer <- lmer(Wing~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F)
+summary(wing_lmer)
+```
+
+```{r Mixed model: Culmen}
+#Mixed model for Culmen
+cul_lmer <- lmer(Culmen~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F)
+summary(cul_lmer)
+```
+
+```{r Mixed model: Mass}
+#Mixed model for Mass
+mas_lmer <- lmer(Mass~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F)
+summary(mas_lmer)
+```
+
+I THINK next step is to start varying the model and do AICc after. We can do that Thursday.
+
+
+
