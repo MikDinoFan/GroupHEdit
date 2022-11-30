@@ -12,6 +12,8 @@ NOTE IMPORTANT - lmer test for wing and mass -- random effects explain 0 of resi
 
 I haven't included Matt's code for the shoreline data yet, you guys are welcome to figure out how to slot that in!
 
+Also Git is very confusing -- if anyone can tell me difference between push and commit please let me know!
+
 ```{r setup, message=F, echo = F}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
