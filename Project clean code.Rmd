@@ -36,6 +36,7 @@ library(stringr)
 library(lme4)
 library(lmerTest)
 library(nlme)
+library(MuMIn)
 ```
 
 ```{r read_data}
@@ -180,5 +181,43 @@ summary(mas_lmer)
 
 I THINK next step is to start varying the model and do AICc after. We can do that Thursday.
 
+(NEW CONTENT)
+
+```{r Mixed model: Wing ~ Year and dist_poh}
+#Mixed model for Wing
+wing_lmer_yd <- lmer(Wing~Year+dist_poh+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F)
+summary(wing_lmer_yd)
+```
+AICc
+
+```{r}
+AICc(wing_lmer_yd,wing_lmer)
+```
+
+Model Dredging (NEW)
+
+```{r Wing Dredge}
+#MuMin package ~ dredge() function!
+wing_lmer_full <- lmer(Wing~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F, na.action="na.fail")
+
+wing_dredge <- dredge(wing_lmer_full, rank=AICc)
+wing_dredge
+```
+
+```{r Mass Dredge}
+#MuMin package ~ dredge() function!
+mass_lmer_full <- lmer(Mass~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F, na.action="na.fail")
+
+mass_dredge <- dredge(mass_lmer_full, rank=AICc)
+```
+
+```{r}
+mass_dredge
+```
+
+```{r}
+top_mass_avg <- model.avg(mass_dredge, subset = delta <=2)
+summary(top_mass_avg)
+```
 
 
