@@ -16,6 +16,8 @@ Also Git is very confusing -- if anyone can tell me difference between push and 
 OK I think I got it -- commit is local amendments and push sends it to the online thing -- confirm if that is the case??? 
 (why can't we submit through Quercus)
 
+##Setup: required libraries
+
 ```{r setup, message=F, echo = F}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
@@ -39,10 +41,14 @@ library(nlme)
 library(MuMIn)
 ```
 
+##Input data
+
 ```{r read_data}
 morph <- read.csv("Morphology_metadata2.csv")
 shr_dat <- read.csv("morph-data-with-shore-dist-binned.csv")
 ```
+
+##PCA
 
 ```{r PCA grouping}
 morph_means <- morph %>% 
@@ -66,6 +72,7 @@ theme_classic()
 
 plot(morph_pc)
 ```
+##Conversion to lat-long and adding landmarks
 
 ```{r spatial_view, message = F}
 # Identifies ESPG as 6334.
@@ -112,6 +119,7 @@ ggmap(map_hi) +
   geom_point(data = effects, aes(x = lon, y = lat, shape = Type), color = "Red")
 
 ```
+##Distance to landmarks calculation
 
 ```{r Distance of points from Landmarks calculation loop}
 #extract points lat-long data into a matrix
@@ -159,6 +167,8 @@ morph_spa_bins <- morph_spa_bins %>%
   mutate(Year=as.numeric(str_sub(morph_spa_bins$Date,-2,-1)))
 ```
 
+##Base Linerar Mixed Models
+
 Here's the Mixed model PLUS shoreline data
 
 ```{r Mixed model: Wing}
@@ -181,6 +191,8 @@ summary(mas_lmer)
 
 I THINK next step is to start varying the model and do AICc after. We can do that Thursday.
 
+##Trying out different models
+
 (NEW CONTENT)
 
 ```{r Mixed model: Wing ~ Year and dist_poh}
@@ -194,9 +206,11 @@ AICc
 AICc(wing_lmer_yd,wing_lmer)
 ```
 
+##Model Dredging
+
 Model Dredging (NEW)
 
-```{r Wing Dredge}
+```{r Wing Dredge, warning=FALSE}
 #MuMin package ~ dredge() function!
 wing_lmer_full <- lmer(Wing~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F, na.action="na.fail")
 
@@ -204,20 +218,55 @@ wing_dredge <- dredge(wing_lmer_full, rank=AICc)
 wing_dredge
 ```
 
-```{r Mass Dredge}
+```{r Culmen Dredge, warning=FALSE}
+cul_lmer_full <- lmer(Culmen~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F, na.action="na.fail")
+
+cul_dredge <- dredge(cul_lmer_full, rank=AICc)
+cul_dredge
+```
+
+
+```{r Mass Dredge, warning=FALSE}
 #MuMin package ~ dredge() function!
 mass_lmer_full <- lmer(Mass~Year+dist_hil+dist_wai+dist_kon+dist_poh+dist_arm_res+(1|mau_loa_bins)+(1|kil_bins)+(1|hua_bins)+(1|mau_kea_bins)+(1|shr_bin),data=morph_spa_bins,REML=F, na.action="na.fail")
 
 mass_dredge <- dredge(mass_lmer_full, rank=AICc)
-```
-
-```{r}
 mass_dredge
 ```
+#Model Averaging (after dredge)
 
-```{r}
+```{r Model average - Wing}
+top_wing_avg <- model.avg(wing_dredge, subset = delta <=2)
+summary(top_wing_avg)
+```
+
+```{r Model average - Culmen}
+top_cul_avg <- model.avg(cul_dredge, subset = delta <=2)
+summary(top_cul_avg)
+```
+
+```{r Model average - Mass}
 top_mass_avg <- model.avg(mass_dredge, subset = delta <=2)
 summary(top_mass_avg)
 ```
 
+Code Experimental(!)
+(DOES NOT REALLY WORK SO IGNORE IT)
 
+#```{r Model average - Wing}
+#top_wing_avg_fit <- model.avg(wing_dredge, subset = delta <=2,fit = T)
+#```
+#```{r}
+#PREDICT uses model to predict
+#morph_spa_bins_prewing <- morph_spa_bins %>% 
+#  mutate(fit_intercept = predict(top_wing_avg_fit))
+
+#ggplot(morph_spa_bins_prewing, aes(Wing, fit_intercept))+
+#  #fixed effect regression line from model output
+#  geom_point()+
+#  geom_abline(aes(intercept=78.302721, slope=-0.259061), size=2)+
+#  ylim(0,80)+
+#  #fitted values (regression) 
+#  #geom_line(aes(y=fit_intercept), size=1)+
+#  theme_classic()
+#```
